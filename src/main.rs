@@ -67,6 +67,7 @@ async fn main() {
             let emails_to = emails_to.clone();
 
             let v = tokio::spawn(async move {
+                println!("开始检测 [{}] 的库存", &product);
                 // 如果有库存，就发邮件
                 if let Some(count) = get_stores(&product).await {
                     if count > 0 {
@@ -74,21 +75,28 @@ async fn main() {
 
                         // 给所有收件箱发送邮件
                         for email_to in emails_to {
+                            println!(
+                                "发送邮件给{}=>{}",
+                                &email_to,
+                                format!("{} 产品有 {} 个新库存", &product, count)
+                            );
                             send_email(
                                 &email_from,
                                 &email_from_password,
                                 &email_to,
-                                format!("{} 产品有 {} 个新库存", &product, count).as_str(),
-                                format!("{} 产品有 {} 个新库存", &product, count).as_str(),
+                                format!("[arrow艾睿] {} 产品有 {} 个新库存", &product, count).as_str(),
+                                format!("[arrow艾睿] {} 产品有 {} 个新库存", &product, count).as_str(),
                             );
                         }
+                    } else {
+                        println!("[{}] 的无库存", &product);
                     }
                 }
             });
             tasks.push(v);
 
             // 限制并发数
-            while tasks.len() > 5 {
+            while tasks.len() > 50 {
                 if let Some(task) = tasks.pop() {
                     task.await.unwrap();
                 }
@@ -165,7 +173,14 @@ fn send_email(from: &str, password: &str, to: &str, title: &str, body: &str) {
         .credentials(Credentials::new(from.into(), password.into()))
         .transport();
 
-    mailer.send(email.into()).unwrap();
+    match mailer.send(email.into()) {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("发送邮件出错：{}", e);
+            println!("发送邮件出错,{}", e);
+            return;
+        }
+    };
 }
 
 fn gen_default_headers() -> HeaderMap {

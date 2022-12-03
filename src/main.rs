@@ -120,7 +120,7 @@ async fn get_stores(product: &str) -> Option<i32> {
 
     let res = match client
         .get(format!(
-            "https://www.arrow.com/en/products/search?cat=&q={}&r=true",
+            "https://www.arrow.com/apps/search/api/autocomplete?q={}&lang=en",
             product
         ))
         .send()

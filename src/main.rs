@@ -7,7 +7,8 @@ use std::{
 use lettre::{smtp::authentication::Credentials, SmtpClient, Transport};
 use lettre_email::EmailBuilder;
 use regex::Regex;
-use reqwest::header::{HeaderMap, ACCEPT, REFERER, USER_AGENT};
+use reqwest::{header::{HeaderMap, ACCEPT, REFERER, USER_AGENT, HeaderValue}, Proxy};
+use serde::{Deserialize, Serialize};
 
 #[tokio::main]
 async fn main() {
@@ -84,8 +85,10 @@ async fn main() {
                                 &email_from,
                                 &email_from_password,
                                 &email_to,
-                                format!("[arrow艾睿] {} 产品有 {} 个新库存", &product, count).as_str(),
-                                format!("[arrow艾睿] {} 产品有 {} 个新库存", &product, count).as_str(),
+                                format!("[arrow艾睿] {} 产品有 {} 个新库存", &product, count)
+                                    .as_str(),
+                                format!("[arrow艾睿] {} 产品有 {} 个新库存", &product, count)
+                                    .as_str(),
                             );
                         }
                     } else {
@@ -105,6 +108,38 @@ async fn main() {
     }
 }
 
+/*
+{"data":{"results":{"products":[{"npi":false,"promoGroup":"","text":"LM258DR","searchUrl":"/en/products/search?selectedType=product&q=LM258DR"},{"npi":false,"promoGroup":"","text":"LM258DR2G","searchUrl":"/en/products/search?selectedType=product&q=LM258DR2G"},{"npi":false,"promoGroup":"","text":"LM258DRG3","searchUrl":"/en/products/search?selectedType=product&q=LM258DRG3"},{"npi":false,"promoGroup":"","text":"LM258DRG4","searchUrl":"/en/products/search?selectedType=product&q=LM258DRG4"},{"npi":false,"promoGroup":"","text":"LM258DR2","searchUrl":"/en/products/search?selectedType=product&q=LM258DR2"}],"productLines":[],"descriptions":[],"manufacturers":[],"suggestions":[],"referenceDesigns":[]}},"error":null}
+*/
+#[derive(Serialize, Deserialize, Debug)]
+struct Product {
+    npi: bool,
+    promo_group: String,
+    text: String,
+    search_url: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Result {
+    products: Vec<Product>,
+    product_lines: Vec<String>,
+    descriptions: Vec<String>,
+    manufacturers: Vec<String>,
+    suggestions: Vec<String>,
+    reference_designs: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Data {
+    results: Result,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Response {
+    data: Data,
+    error: String,
+}
+
 async fn get_stores(product: &str) -> Option<i32> {
     // 根据获取到的cookie创建 reqwest client
     let client = {
@@ -112,8 +147,12 @@ async fn get_stores(product: &str) -> Option<i32> {
 
         reqwest::Client::builder()
             .default_headers(default_headers.clone())
-            .cookie_store(true)
-            .timeout(Duration::from_secs(30))
+            // .cookie_store(true)
+            // 代理 127.0.0.1:8888
+            .proxy(
+                Proxy::http("http://localhost:8888").unwrap()
+            )
+            .timeout(Duration::from_secs(5))
             .build()
             .unwrap()
     };
@@ -128,34 +167,45 @@ async fn get_stores(product: &str) -> Option<i32> {
     {
         Ok(v) => v,
         Err(e) => {
-            log::error!("请求出错:{}", e);
+            println!("请求出错:{}", e);
             return None;
         }
     };
 
-    let html = match res.text().await {
+    let res: Response = match res.json().await {
         Ok(v) => v,
         Err(e) => {
-            log::error!("获取网页代码出错:{}", e);
+            println!("解析出错:{}", e);
             return None;
         }
     };
 
-    // 正则匹配库存数, 4,970 parts
-    let re = Regex::new(r#"([,\d]+) parts"#).unwrap();
+    println!("获取到的产品列表:{:#?}", res);
 
-    let mut caps = re.captures_iter(&html);
-    let v = match caps.next() {
-        Some(v) => v,
-        None => {
-            return None;
-        }
-    };
+    // let html = match res.text().await {
+    //     Ok(v) => v,
+    //     Err(e) => {
+    //         log::error!("获取网页代码出错:{}", e);
+    //         return None;
+    //     }
+    // };
 
-    let store: i32 = v[1].replace(",", "").parse().unwrap();
-    log::debug!("{:#?}", store);
+    // // 正则匹配库存数, 4,970 parts
+    // let re = Regex::new(r#"([,\d]+) parts"#).unwrap();
 
-    Some(store)
+    // let mut caps = re.captures_iter(&html);
+    // let v = match caps.next() {
+    //     Some(v) => v,
+    //     None => {
+    //         return None;
+    //     }
+    // };
+
+    // let store: i32 = v[1].replace(",", "").parse().unwrap();
+    // log::debug!("{:#?}", store);
+
+    // Some(store)
+    None
 }
 
 fn send_email(from: &str, password: &str, to: &str, title: &str, body: &str) {
@@ -185,26 +235,32 @@ fn send_email(from: &str, password: &str, to: &str, title: &str, body: &str) {
 
 fn gen_default_headers() -> HeaderMap {
     let mut default_headers = HeaderMap::new();
-
-    default_headers.insert(USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36".parse().unwrap());
-    default_headers.insert(REFERER, "https://www.arrow.com/en/npi".parse().unwrap());
-    default_headers.insert(
-        "sec-ch-ua",
-        r#"" Not A;Brand";v="99", "Chromium";v="96", "Google Chrome";v="96""#
-            .parse()
-            .unwrap(),
-    );
-    default_headers.insert("sec-ch-ua-mobile", r#"?0"#.parse().unwrap());
-    default_headers.insert("sec-ch-ua-platform", r#""Windows""#.parse().unwrap());
-    default_headers.insert("Upgrade-Insecure-Requests", r#"1"#.parse().unwrap());
-    default_headers.insert(ACCEPT,r#"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"#.parse().unwrap());
-
-    default_headers.insert("Sec-Fetch-Site", r#"same-origin"#.parse().unwrap());
-    default_headers.insert("Sec-Fetch-Mode", r#"navigate"#.parse().unwrap());
-    default_headers.insert("Sec-Fetch-User", r#"?1"#.parse().unwrap());
-    default_headers.insert("Sec-Fetch-Dest", r#"document"#.parse().unwrap());
-    default_headers.insert("Accept-Language", r#"zh"#.parse().unwrap());
-    default_headers.insert("Accept-Encoding", r#"gzip, deflate, br"#.parse().unwrap());
+    
+    default_headers.insert("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9".parse().unwrap());
+    default_headers.insert("accept-encoding", "gzip, deflate, br".parse().unwrap());
+    default_headers.insert("accept-language", "zh".parse().unwrap());
+    default_headers.insert("cache-control", "no-cache".parse().unwrap());
+    default_headers.insert("pragma", "no-cache".parse().unwrap());
+    default_headers.insert("sec-ch-ua", "\"Google Chrome\";v=\"107\", \"Chromium\";v=\"107\", \"Not=A?Brand\";v=\"24\"".parse().unwrap());
+    default_headers.insert("sec-ch-ua-mobile", "?0".parse().unwrap());
+    default_headers.insert("sec-ch-ua-platform", "\"Windows\"".parse().unwrap());
+    default_headers.insert("sec-fetch-dest", "document".parse().unwrap());
+    default_headers.insert("sec-fetch-mode", "navigate".parse().unwrap());
+    default_headers.insert("sec-fetch-site", "none".parse().unwrap());
+    default_headers.insert("sec-fetch-user", "?1".parse().unwrap());
+    default_headers.insert("upgrade-insecure-requests", "1".parse().unwrap());
+    default_headers.insert("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36".parse().unwrap());
 
     default_headers
 }
+
+
+#[test]
+fn test_get_stores() {
+    let  rt = tokio::runtime::Runtime::new().unwrap();
+    let res = rt.block_on(async{
+        get_stores("LM258DR").await;
+    });
+    println!("{:#?}", res);
+}
+
